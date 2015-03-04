@@ -1,19 +1,22 @@
 #include "A36465.h"
-//#include "FIRMWARE_VERSION.h"
-//#include "ETM_EEPROM.h"
-//#include "LTC265X.h"
+#include "FIRMWARE_VERSION.h"
+#include "ETM_EEPROM.h"
+#include "LTC265X.h"
 
 // This is the firmware for the AFC BOARD
 
 
 _FOSC(ECIO & CSW_FSCM_OFF); 
 _FWDT(WDT_ON & WDTPSA_512 & WDTPSB_8);  // 8 Second watchdog timer 
-_FBORPOR(PWRT_OFF & BORV45 & PBOR_OFF & MCLR_EN);
+//_FBORPOR(PWRT_OFF & BORV45 & PBOR_OFF & MCLR_EN);
+_FBORPOR(PWRT_OFF & BORV45 & PBOR_ON & MCLR_EN);
 _FBS(WR_PROTECT_BOOT_OFF & NO_BOOT_CODE & NO_BOOT_EEPROM & NO_BOOT_RAM);
 _FSS(WR_PROT_SEC_OFF & NO_SEC_CODE & NO_SEC_EEPROM & NO_SEC_RAM);
 _FGS(GWRP_OFF & GSS_OFF);
 _FICD(PGD);
 
+
+LTC265X U23_LTC2654;
 
 #define MAX_POWER_TABLE_VALUES 50,94,138,182,226,269,311,353,394,435,474,513,550,586,621,654,686,717,746,773,798,822,844,864,881,897,911,923,933,940,946,949,950,949,946,940,933,923,911,897,881,864,844,822,798,773,746,717,686,654,621,586,550,513,474,435,394,353,311,269,226,182,138,94,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50
 
@@ -23,15 +26,24 @@ _FICD(PGD);
 
 STEPPER_MOTOR afc_motor;
 
-const unsigned int PWMHighPowerTable[128] = {MAX_POWER_TABLE_VALUES};
+const unsigned int PWMHighPowerTable[128] = {FULL_POWER_TABLE_VALUES};
 const unsigned int PWMLowPowerTable[128] = {LOW_POWER_TABLE_VALUES};
+
+
+AFCControlData global_data_A36465;
 
 
 void DoStateMachine(void);
 void InitializeA36465(void);
 void DoA36465(void);
 
+
+#define STATE_STARTUP  0x10
+#define STATE_RUN      0x20
+
 int main(void) {
+    InitializeA36465();
+
 
   global_data_A36465.control_state = STATE_STARTUP;
   while (1) {
@@ -39,16 +51,33 @@ int main(void) {
   }
 }
 
+
+
 void DoStateMachine(void) {
   switch (global_data_A36465.control_state) {
 
   case STATE_STARTUP:
-    InitializeA36465();
+    global_data_A36465.control_state = STATE_RUN;
     break;
 
   case STATE_RUN:
-    DoA36465();
+    while (global_data_A36465.control_state == STATE_RUN) {
+      if (afc_motor.current_position <= 1000) {
+	afc_motor.target_position = afc_motor.max_position;
+      }
+      if (afc_motor.current_position >= 50000) {
+	afc_motor.target_position = afc_motor.min_position;
+      }
+      
+      
+      DoA36465();
+    }
     break;
+
+  default:
+    global_data_A36465.control_state = STATE_RUN;
+    break;
+
   }
 }
 
@@ -63,9 +92,9 @@ void InitializeA36465(void) {
 
   afc_motor.min_position = 0;
   afc_motor.max_position = 60000;
-  afc_motor.current_position = afc_motor.max_position;
+  afc_motor.current_position = 45000;
   afc_motor.home_position = 30000;
-  afc_motor.target_position = 77;
+  afc_motor.target_position = 20000;
   afc_motor.time_steps_stopped = 0;
 
 
@@ -115,6 +144,34 @@ void InitializeA36465(void) {
   _INT1IF = 0;
   _INT1IP = 7;
   _INT1IE = 1;
+
+  _INT1IE = 0;
+
+  
+  // Initialize the status register and load the inhibit and fault masks
+  _FAULT_REGISTER = 0;
+  _CONTROL_REGISTER = 0;
+  etm_can_status_register.data_word_A = 0x0000;
+  etm_can_status_register.data_word_B = 0x0000;
+  
+  etm_can_my_configuration.firmware_major_rev = FIRMWARE_AGILE_REV;
+  etm_can_my_configuration.firmware_branch = FIRMWARE_BRANCH;
+  etm_can_my_configuration.firmware_minor_rev = FIRMWARE_MINOR_REV;
+
+
+
+
+  // Initialize the External EEprom
+  ETMEEPromConfigureExternalDevice(EEPROM_SIZE_8K_BYTES, FCY_CLK, 400000, EEPROM_I2C_ADDRESS_0, 1);
+
+
+  // Initialize the Can module
+  ETMCanSlaveInitialize();
+
+
+  // Initialize LTC DAC
+  SetupLTC265X(&U23_LTC2654, ETM_SPI_PORT_1, FCY_CLK, LTC265X_SPI_2_5_M_BIT, _PIN_RG15, _PIN_RC1);
+
   
 }
 
@@ -141,12 +198,11 @@ void InitializeA36465(void) {
 unsigned int ShiftIndex(unsigned int index, unsigned int shift);
 
 
-
-
 void __attribute__((interrupt, no_auto_psv, shadow)) _INT1Interrupt(void) {
   /* 
      The INT1 Interrupt is used to sample the Sigma/Delta signals durring a pulse 
   */
+
   _SAMP = 0;
   PIN_TEST_POINT_A = 1;
   _DONE = 0;
@@ -159,9 +215,9 @@ void __attribute__((interrupt, no_auto_psv, shadow)) _INT1Interrupt(void) {
 
 void __attribute__((interrupt, no_auto_psv)) _T1Interrupt(void) {
   /*
-    The T2 interrupt controls the motor movent
-    The maximum speed of the motor is 1/32 step per _T2 interrupt
-    The maximum speed of the motor is set by setting the time of the _T2 interrupt 
+    The T1 interrupt controls the motor movent
+    The maximum speed of the motor is 1/32 step per _T1 interrupt
+    The maximum speed of the motor is set by setting the time of the _T1 interrupt 
   */
 
   _T1IF = 0;
@@ -205,8 +261,20 @@ void __attribute__((interrupt, no_auto_psv)) _T1Interrupt(void) {
 }
 
 unsigned int ShiftIndex(unsigned int index, unsigned int shift) {
-  index += shift;
-  index &= 0x007F;
-  return index;
+  unsigned int value;
+  value = index;
+  value &= 0x007F;
+  value += shift;
+  value &= 0x007F;
+  return value;
 }
 
+
+
+void __attribute__((interrupt, no_auto_psv)) _DefaultInterrupt(void) {
+  // Clearly should not get here without a major problem occuring
+  // DPARKER do something to save the state into a RAM location that is not re-initialized and then reset
+  Nop();
+  Nop();
+  __asm__ ("Reset");
+}

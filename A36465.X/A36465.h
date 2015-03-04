@@ -2,14 +2,15 @@
 #ifndef __A36465_H
 #define __A36465_H
 
-#include <p30f6010a.h>
+#include <xc.h>
 #include <libpic30.h>
 #include <adc10.h>
 #include <timer.h>
 #include <pwm.h>
 
-//#include "ETM_CAN_PUBLIC.h"
-//#include "ETM_ANALOG.h"
+#include "P1395_CAN_SLAVE.h"
+#include "P1395_MODULE_CONFIG.h"
+#include "ETM_ANALOG.h"
 
 /*
   Hardware Module Resource Usage
@@ -132,13 +133,13 @@
 // LEDs
 #define PIN_LED_OPERATIONAL_GREEN        _LATG6
 #define PIN_LED_A_RED                    _LATG8
-#define PIN_LED_B_GREEN                  _LATG9  // This is is configured by the CAN module to flash on CAN Bus activity
+
 
 
 // ---------------- Motor Configuration Values ------------- //
 #define MOTOR_PWM_FREQ            20000        // Motor Drive Frequency is 10KHz
-#define MOTOR_SPEED_FAST          600          // Motor Speed in Full Steps per Second in "Fast Mode"
-#define MOTOR_SPEED_SLOW          600           // 
+#define MOTOR_SPEED_FAST          400          // Motor Speed in Full Steps per Second in "Fast Mode"
+#define MOTOR_SPEED_SLOW          400           // 
 #define FCY_CLK                             10000000      // 10 MHz
 #define DELAY_SWITCH_TO_LOW_POWER_MODE 200
 
@@ -181,7 +182,10 @@
 #define ADPCFG_SETTING   (ENABLE_AN2_ANA & ENABLE_AN3_ANA & ENABLE_AN4_ANA & ENABLE_AN5_ANA & ENABLE_AN8_ANA)
 #define ADCSSL_SETTING   (SKIP_SCAN_AN0 & SKIP_SCAN_AN1 & SKIP_SCAN_AN2 & SKIP_SCAN_AN6 & SKIP_SCAN_AN7 & SKIP_SCAN_AN9 & SKIP_SCAN_AN10 & SKIP_SCAN_AN11 & SKIP_SCAN_AN12 & SKIP_SCAN_AN13 & SKIP_SCAN_AN14 & SKIP_SCAN_AN15)
 
+typedef struct {
+  unsigned int control_state;
 
+} AFCControlData;
 
 
 
@@ -191,7 +195,7 @@ typedef struct {
   unsigned int home_position;
   unsigned int max_position;
   unsigned int min_position;
-  unsigned int pwm_table_index;
+  //unsigned int pwm_table_index;
   unsigned int time_steps_stopped;
 } STEPPER_MOTOR;
 

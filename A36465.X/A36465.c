@@ -16,6 +16,10 @@ _FGS(GWRP_OFF & GSS_OFF);
 _FICD(PGD);
 
 
+unsigned int ShiftIndex(unsigned int index, unsigned int shift);
+
+void DoAFC(void);
+
 LTC265X U23_LTC2654;
 
 #define MAX_POWER_TABLE_VALUES 50,94,138,182,226,269,311,353,394,435,474,513,550,586,621,654,686,717,746,773,798,822,844,864,881,897,911,923,933,940,946,949,950,949,946,940,933,923,911,897,881,864,844,822,798,773,746,717,686,654,621,586,550,513,474,435,394,353,311,269,226,182,138,94,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50
@@ -24,11 +28,16 @@ LTC265X U23_LTC2654;
 
 #define LOW_POWER_TABLE_VALUES 50,65,79,94,109,123,137,151,165,178,191,204,217,229,240,251,262,272,282,291,299,307,315,321,327,332,337,341,344,347,349,350,350,350,349,347,344,341,337,332,327,321,315,307,299,291,282,272,262,251,240,229,217,204,191,178,165,151,137,123,109,94,79,65,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50
 
-STEPPER_MOTOR afc_motor;
-
 const unsigned int PWMHighPowerTable[128] = {FULL_POWER_TABLE_VALUES};
 const unsigned int PWMLowPowerTable[128] = {LOW_POWER_TABLE_VALUES};
 
+#define FAST_RESPONSE_TABLE_VALUES 0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3
+#define SLOW_RESPONSE_TABLE_VALUES 0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3
+
+const unsigned int fast_response_lookup_table[16] = {FAST_RESPONSE_TABLE_VALUES};
+const unsigned int slow_response_lookup_table[16] = {SLOW_RESPONSE_TABLE_VALUES};
+
+STEPPER_MOTOR afc_motor;
 
 AFCControlData global_data_A36465;
 
@@ -38,18 +47,23 @@ void InitializeA36465(void);
 void DoA36465(void);
 
 
-#define STATE_STARTUP  0x10
-#define STATE_RUN      0x20
+#define STATE_STARTUP       0x10
+#define STATE_AUTO_ZERO     0x20
+#define STATE_AUTO_HOME     0x30
+#define STATE_RUN_AFC       0x40
+#define STATE_RUN_MANUAL    0x50
+#define STATE_FAULT         0x60
+
 
 int main(void) {
-    InitializeA36465();
-
-
   global_data_A36465.control_state = STATE_STARTUP;
   while (1) {
     DoStateMachine();
   }
 }
+
+#define AFC_MOTOR_MIN_POSITION      1000
+#define AFC_MOTOR_MAX_POSITION      60000
 
 
 
@@ -57,25 +71,72 @@ void DoStateMachine(void) {
   switch (global_data_A36465.control_state) {
 
   case STATE_STARTUP:
-    global_data_A36465.control_state = STATE_RUN;
+    InitializeA36465();
+    afc_motor.min_position = 0;
+    afc_motor.max_position = 0xFFF0;
+    afc_motor.home_position = 34000;
+    afc_motor.time_steps_stopped = 0;
+    global_data_A36465.control_state = STATE_AUTO_ZERO;
     break;
 
-  case STATE_RUN:
-    while (global_data_A36465.control_state == STATE_RUN) {
-      if (afc_motor.current_position <= 1000) {
-	afc_motor.target_position = afc_motor.max_position;
+  case STATE_AUTO_ZERO:
+    afc_motor.current_position = 0xFFF0;
+    afc_motor.target_position  = 0;
+    _CONTROL_NOT_CONFIGURED = 1;
+    while (global_data_A36465.control_state == STATE_AUTO_ZERO) {
+      DoA36465();
+      if ((afc_motor.current_position <= 100) && (_CONTROL_NOT_CONFIGURED == 0)) {
+	global_data_A36465.control_state = STATE_AUTO_HOME;
       }
-      if (afc_motor.current_position >= 50000) {
-	afc_motor.target_position = afc_motor.min_position;
+    }
+    break;
+
+  case STATE_AUTO_HOME:
+    afc_motor.min_position = AFC_MOTOR_MIN_POSITION;
+    afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
+    afc_motor.target_position = afc_motor.home_position;
+    while (global_data_A36465.control_state == STATE_AUTO_HOME) {
+      DoA36465();
+      if (afc_motor.current_position == afc_motor.home_position) {
+	global_data_A36465.control_state = STATE_RUN_AFC;
       }
-      
-      
+    }
+    break;
+    
+  case STATE_RUN_AFC:
+    while (global_data_A36465.control_state == STATE_RUN_AFC) {
+      DoA36465();
+      if (global_data_A36465.sample_complete) {
+	global_data_A36465.sample_complete = 0;
+	//DoAFC();
+      }
+
+      if (_STATUS_AFC_MODE_MANUAL_MODE) {
+	global_data_A36465.control_state = STATE_RUN_MANUAL;
+      }
+    }
+    break;
+    
+    
+  case STATE_RUN_MANUAL:
+    while (global_data_A36465.control_state == STATE_RUN_MANUAL) {
+      DoA36465();
+      afc_motor.target_position = global_data_A36465.manual_target_position;
+      if (!_STATUS_AFC_MODE_MANUAL_MODE) {
+	global_data_A36465.control_state = STATE_RUN_AFC;
+      }
+    }
+    break;
+    
+ case STATE_FAULT:
+    while (global_data_A36465.control_state == STATE_FAULT) {
       DoA36465();
     }
     break;
 
+
   default:
-    global_data_A36465.control_state = STATE_RUN;
+    global_data_A36465.control_state = STATE_RUN_AFC;
     break;
 
   }
@@ -84,19 +145,18 @@ void DoStateMachine(void) {
 
 void DoA36465(void) {
   ETMCanSlaveDoCan();
+  local_debug_data.debug_0 = afc_motor.target_position;
+  local_debug_data.debug_1 = afc_motor.current_position;
+  local_debug_data.debug_2 = afc_motor.home_position;
+  local_debug_data.debug_3 = afc_motor.max_position;
+  local_debug_data.debug_4 = afc_motor.min_position;
+  local_debug_data.debug_5 = global_data_A36465.control_state;
+  local_debug_data.debug_6 = global_data_A36465.manual_target_position;
 }
 
 
 
 void InitializeA36465(void) {
-
-  afc_motor.min_position = 0;
-  afc_motor.max_position = 60000;
-  afc_motor.current_position = 45000;
-  afc_motor.home_position = 30000;
-  afc_motor.target_position = 20000;
-  afc_motor.time_steps_stopped = 0;
-
 
   TRISA = A36465_TRISA_VALUE;
   TRISB = A36465_TRISB_VALUE;
@@ -184,18 +244,92 @@ void InitializeA36465(void) {
 
 
 
+unsigned int GetDirectionToMove(int error_reading);
+unsigned int GetIndexToMove(int error_reading);
+
+unsigned int GetDirectionToMove(int error_reading) {
+  if (error_reading > 0) {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
+unsigned int GetIndexToMove(int error_reading) {
+  if (error_reading < 0) {
+    error_reading = -error_reading;
+  }
+  error_reading >>= 3;
+  if (error_reading >= 15) {
+    error_reading = 15;
+  }
+  return error_reading;
+}
+
+#define MIN_ERROR_FAST_AFC                         16
+#define MAX_NUMBER_OF_PULSES_FOR_STARTUP_RESPONSE  256
+
+void DoAFC(void) {
+  unsigned int direction_move;
+  unsigned int index_move;
+  unsigned int steps_to_move;
+  unsigned int position_now;
+  unsigned int new_target_position;
+
+  position_now = afc_motor.current_position;
+  
+  direction_move = GetDirectionToMove(global_data_A36465.frequency_error_filtered);
+  index_move = GetIndexToMove(global_data_A36465.frequency_error_filtered);
+
+  if (!global_data_A36465.fast_afc_done) {
+    /*
+      The magnetron has just turned on after being off for a period of time.
+      The tuner *could* be wildly out of position.
+      We need to react to the incoming data from AFC very quickly
+      This means less filtering and and high gain integral response - Max 4 Steps per sample
+    */
+
+    steps_to_move = fast_response_lookup_table[index_move];
+
+    if ((global_data_A36465.pulses_on_this_run >= 4) && (global_data_A36465.frequency_error_filtered <= MIN_ERROR_FAST_AFC)) {
+      global_data_A36465.fast_afc_done = 1;
+    }
+    if (global_data_A36465.pulses_on_this_run >= MAX_NUMBER_OF_PULSES_FOR_STARTUP_RESPONSE) {
+      global_data_A36465.fast_afc_done = 1;
+    }
+ 
+  } else {
+    steps_to_move = slow_response_lookup_table[index_move];
+  }
+  
+  if (direction_move) {
+    // decrease the target position
+    if (position_now > steps_to_move) {
+      new_target_position = position_now - steps_to_move;
+    } else {
+      new_target_position = 0;
+    }
+  } else {
+    // increase the target position
+    if ((0xFFFF - steps_to_move) > position_now) {
+      new_target_position = position_now + steps_to_move;
+    } else {
+      new_target_position = 0xFFFF;
+    }
+  }
+  afc_motor.target_position = new_target_position;
+}
 
 
+unsigned int ShiftIndex(unsigned int index, unsigned int shift) {
+  unsigned int value;
+  value = index;
+  value &= 0x007F;
+  value += shift;
+  value &= 0x007F;
+  return value;
+}
 
-
-
-
-
-
-
-
-
-unsigned int ShiftIndex(unsigned int index, unsigned int shift);
 
 
 void __attribute__((interrupt, no_auto_psv, shadow)) _INT1Interrupt(void) {
@@ -209,6 +343,8 @@ void __attribute__((interrupt, no_auto_psv, shadow)) _INT1Interrupt(void) {
   while (!_DONE);
   PIN_TEST_POINT_A = 0;
   _INT1IF = 0;
+
+  global_data_A36465.sample_complete = 1;
 }
 
 
@@ -259,17 +395,6 @@ void __attribute__((interrupt, no_auto_psv)) _T1Interrupt(void) {
   }
 
 }
-
-unsigned int ShiftIndex(unsigned int index, unsigned int shift) {
-  unsigned int value;
-  value = index;
-  value &= 0x007F;
-  value += shift;
-  value &= 0x007F;
-  return value;
-}
-
-
 
 void __attribute__((interrupt, no_auto_psv)) _DefaultInterrupt(void) {
   // Clearly should not get here without a major problem occuring

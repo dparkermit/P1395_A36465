@@ -29,6 +29,8 @@
   Motor Control PWM Module - Used to control AFC stepper motor
 
   Timer1 - Used for timing motor steps
+  Timer4 - Used to time how long since the last trigger (used for cooldown)
+
 */
 
 
@@ -184,9 +186,14 @@
 
 typedef struct {
   unsigned int control_state;
-
+  unsigned int manual_target_position;
+  unsigned int sample_complete;
+  int          frequency_error_filtered;
+  unsigned int fast_afc_done;
+  unsigned int pulses_on_this_run;
 } AFCControlData;
 
+extern AFCControlData global_data_A36465;
 
 
 typedef struct {
@@ -198,6 +205,14 @@ typedef struct {
   //unsigned int pwm_table_index;
   unsigned int time_steps_stopped;
 } STEPPER_MOTOR;
+
+extern STEPPER_MOTOR afc_motor;
+
+#define _STATUS_AFC_AUTO_ZERO_HOME_IN_PROGRESS          _STATUS_0
+#define _STATUS_AFC_MODE_MANUAL_MODE                    _STATUS_1
+
+
+#define _FAULT_CAN_COMMUNICATION_LATCHED                _FAULT_0
 
 
 

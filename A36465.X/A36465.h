@@ -22,14 +22,12 @@
   SPI1   - Used/Configured by LTC265X Module
   I2C    - Used/Configured by EEPROM Module
 
-  Timer5 - Used for 10msTicToc
 
+  Timer5 - Used for 10ms Generation
+  
   ADC Module - See Below For Specifics
-
   Motor Control PWM Module - Used to control AFC stepper motor
-
   Timer1 - Used for timing motor steps
-  Timer4 - Used to time how long since the last trigger (used for cooldown)
 
 */
 
@@ -154,6 +152,18 @@
 #define PR1_SLOW_SETTING  (unsigned int)(FCY_CLK / 32 / 8 / MOTOR_SPEED_SLOW)
 
 
+/* 
+   TMR5 Configuration
+   Timer5 - Used for 10msTicToc
+   Period should be set to 10mS
+   With 10Mhz Clock, x8 multiplier will yield max period of 17.7mS, 2.71uS per tick
+*/
+
+#define T5CON_VALUE                    (T5_ON & T5_IDLE_CON & T5_GATE_OFF & T5_PS_1_8 & T5_SOURCE_INT)
+#define PR5_PERIOD_US                  10000   // 10mS
+#define PR5_VALUE_10_MILLISECONDS      (unsigned int)(FCY_CLK_MHZ*PR5_PERIOD_US/8)
+
+
 // Motor Drive Configuration
 #define PTCON_SETTING     (PWM_EN & PWM_IPCLK_SCALE1 & PWM_MOD_FREE)
 #define PTPER_SETTING     (unsigned int)(FCY_CLK/MOTOR_PWM_FREQ)
@@ -191,6 +201,10 @@ typedef struct {
   int          frequency_error_filtered;
   unsigned int fast_afc_done;
   unsigned int pulses_on_this_run;
+  unsigned int pulse_off_counter;
+  unsigned int afc_hot_position;
+  AnalogOutput aft_control_voltage;
+  
 } AFCControlData;
 
 extern AFCControlData global_data_A36465;

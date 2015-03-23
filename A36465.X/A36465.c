@@ -28,6 +28,7 @@ LTC265X U23_LTC2654;
 
 #define LOW_POWER_TABLE_VALUES 50,65,79,94,109,123,137,151,165,178,191,204,217,229,240,251,262,272,282,291,299,307,315,321,327,332,337,341,344,347,349,350,350,350,349,347,344,341,337,332,327,321,315,307,299,291,282,272,262,251,240,229,217,204,191,178,165,151,137,123,109,94,79,65,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50,50
 
+
 const unsigned int PWMHighPowerTable[128] = {FULL_POWER_TABLE_VALUES};
 const unsigned int PWMLowPowerTable[128] = {LOW_POWER_TABLE_VALUES};
 
@@ -108,7 +109,8 @@ void DoStateMachine(void) {
       DoA36465();
       if (global_data_A36465.sample_complete) {
 	global_data_A36465.sample_complete = 0;
-	//DoAFC();
+	global_data_A36465.pulse_off_counter = 0;
+	DoAFC();
       }
 
       if (_STATUS_AFC_MODE_MANUAL_MODE) {
@@ -142,6 +144,14 @@ void DoStateMachine(void) {
   }
 }
 
+#define NO_PULSE_TIME_TO_INITITATE_COOLDOWN 100   // 1 second
+#define LIMIT_RECORDED_OFF_TIME             60000 // 600 seconds, 10 minutes
+
+void DoAFCCooldown(void);
+
+void DoAFCCooldown(void) {
+
+}
 
 void DoA36465(void) {
   ETMCanSlaveDoCan();
@@ -152,6 +162,26 @@ void DoA36465(void) {
   local_debug_data.debug_4 = afc_motor.min_position;
   local_debug_data.debug_5 = global_data_A36465.control_state;
   local_debug_data.debug_6 = global_data_A36465.manual_target_position;
+
+  if (_T5IF) {
+    _T5IF = 0;
+
+    //update the AFT control voltage
+    ETMAnalogScaleCalibrateDACSetting(&global_data_A36465.aft_control_voltage);
+    WriteLTC265X(&U23_LTC2654, LTC265X_WRITE_AND_UPDATE_DAC_A, global_data_A36465.aft_control_voltage.dac_setting_scaled_and_calibrated);
+  
+    global_data_A36465.pulse_off_counter++;
+    if (global_data_A36465.fast_afc_done == 1) {
+      global_data_A36465.afc_hot_position = afc_motor.current_position;
+    }
+    if (global_data_A36465.pulse_off_counter >= NO_PULSE_TIME_TO_INITITATE_COOLDOWN) {
+      global_data_A36465.fast_afc_done = 0;
+      DoAFCCooldown();
+    }
+    if (global_data_A36465.pulse_off_counter >= LIMIT_RECORDED_OFF_TIME) {
+      global_data_A36465.pulse_off_counter = LIMIT_RECORDED_OFF_TIME;
+    }
+  }
 }
 
 
@@ -194,6 +224,11 @@ void InitializeA36465(void) {
   _T1IE = 1;
   T1CON = T1CON_SETTING;
 
+  PR5 = PR5_VALUE_10_MILLISECONDS;
+  T5CON = T5CON_VALUE;
+  _T5IF = 0;
+  
+
   ADCON2 = ADCON2_SETTING;
   ADCON3 = ADCON3_SETTING;
   ADCHS  = ADCHS_SETTING;
@@ -218,29 +253,27 @@ void InitializeA36465(void) {
   etm_can_my_configuration.firmware_branch = FIRMWARE_BRANCH;
   etm_can_my_configuration.firmware_minor_rev = FIRMWARE_MINOR_REV;
 
-
-
-
   // Initialize the External EEprom
   ETMEEPromConfigureExternalDevice(EEPROM_SIZE_8K_BYTES, FCY_CLK, 400000, EEPROM_I2C_ADDRESS_0, 1);
-
-
-  // Initialize the Can module
-  ETMCanSlaveInitialize();
-
 
   // Initialize LTC DAC
   SetupLTC265X(&U23_LTC2654, ETM_SPI_PORT_1, FCY_CLK, LTC265X_SPI_2_5_M_BIT, _PIN_RG15, _PIN_RC1);
 
+
+#define AFT_CONTROL_VOLTAGE_MAX_PROGRAM  12000
+#define AFT_CONTROL_VOLTAGE_MIN_PROGRAM  1000
+
+  ETMAnalogInitializeOutput(&global_data_A36465.aft_control_voltage,
+			    MACRO_DEC_TO_SCALE_FACTOR_16(3.98799),
+			    OFFSET_ZERO,
+			    ANALOG_OUTPUT_0,
+			    AFT_CONTROL_VOLTAGE_MAX_PROGRAM,
+			    AFT_CONTROL_VOLTAGE_MIN_PROGRAM,
+			    0);
   
+  // Initialize the Can module
+  ETMCanSlaveInitialize();
 }
-
-
-
-
-
-
-
 
 
 

@@ -204,6 +204,9 @@ typedef struct {
   unsigned int pulse_off_counter;
   unsigned int afc_hot_position;
   AnalogOutput aft_control_voltage;
+  AnalogInput  aft_A_sample;
+  AnalogInput  aft_B_sample;
+  unsigned int sample_index;
   
 } AFCControlData;
 

@@ -16,9 +16,15 @@ _FGS(GWRP_OFF & GSS_OFF);
 _FICD(PGD);
 
 
+  unsigned char dac_test;
+
+
+
 unsigned int ShiftIndex(unsigned int index, unsigned int shift);
 
 void DoAFC(void);
+
+void DoADCFilter(void);
 
 LTC265X U23_LTC2654;
 
@@ -93,6 +99,7 @@ void DoStateMachine(void) {
     break;
 
   case STATE_AUTO_HOME:
+    global_data_A36465.aft_control_voltage.enabled = 1;
     afc_motor.min_position = AFC_MOTOR_MIN_POSITION;
     afc_motor.max_position = AFC_MOTOR_MAX_POSITION;
     afc_motor.target_position = afc_motor.home_position;
@@ -110,6 +117,7 @@ void DoStateMachine(void) {
       if (global_data_A36465.sample_complete) {
 	global_data_A36465.sample_complete = 0;
 	global_data_A36465.pulse_off_counter = 0;
+	DoADCFilter();
 	DoAFC();
       }
 
@@ -124,6 +132,11 @@ void DoStateMachine(void) {
     while (global_data_A36465.control_state == STATE_RUN_MANUAL) {
       DoA36465();
       afc_motor.target_position = global_data_A36465.manual_target_position;
+      if (global_data_A36465.sample_complete) {
+	global_data_A36465.sample_complete = 0;
+	global_data_A36465.pulse_off_counter = 0;
+	DoADCFilter();
+      }
       if (!_STATUS_AFC_MODE_MANUAL_MODE) {
 	global_data_A36465.control_state = STATE_RUN_AFC;
       }
@@ -163,12 +176,26 @@ void DoA36465(void) {
   local_debug_data.debug_5 = global_data_A36465.control_state;
   local_debug_data.debug_6 = global_data_A36465.manual_target_position;
 
+
+  local_debug_data.debug_8 = global_data_A36465.aft_A_sample.filtered_adc_reading;
+  local_debug_data.debug_9 = global_data_A36465.aft_B_sample.filtered_adc_reading;
+  local_debug_data.debug_A = global_data_A36465.aft_A_sample.reading_scaled_and_calibrated;
+  local_debug_data.debug_B = global_data_A36465.aft_B_sample.reading_scaled_and_calibrated;
+  local_debug_data.debug_C = global_data_A36465.sample_index;
+
+
+
   if (_T5IF) {
     _T5IF = 0;
 
+
+    if (_SYNC_CONTROL_CLEAR_DEBUG_DATA) {
+      global_data_A36465.sample_index = 0;
+    }
+
     //update the AFT control voltage
     ETMAnalogScaleCalibrateDACSetting(&global_data_A36465.aft_control_voltage);
-    WriteLTC265X(&U23_LTC2654, LTC265X_WRITE_AND_UPDATE_DAC_A, global_data_A36465.aft_control_voltage.dac_setting_scaled_and_calibrated);
+    dac_test = WriteLTC265X(&U23_LTC2654, LTC265X_WRITE_AND_UPDATE_DAC_A, global_data_A36465.aft_control_voltage.dac_setting_scaled_and_calibrated);
   
     global_data_A36465.pulse_off_counter++;
     if (global_data_A36465.fast_afc_done == 1) {
@@ -240,8 +267,6 @@ void InitializeA36465(void) {
   _INT1IP = 7;
   _INT1IE = 1;
 
-  _INT1IE = 0;
-
   
   // Initialize the status register and load the inhibit and fault masks
   _FAULT_REGISTER = 0;
@@ -257,8 +282,8 @@ void InitializeA36465(void) {
   ETMEEPromConfigureExternalDevice(EEPROM_SIZE_8K_BYTES, FCY_CLK, 400000, EEPROM_I2C_ADDRESS_0, 1);
 
   // Initialize LTC DAC
-  SetupLTC265X(&U23_LTC2654, ETM_SPI_PORT_1, FCY_CLK, LTC265X_SPI_2_5_M_BIT, _PIN_RG15, _PIN_RC1);
-
+  //SetupLTC265X(&U23_LTC2654, ETM_SPI_PORT_1, FCY_CLK, LTC265X_SPI_2_5_M_BIT, _PIN_RG15, _PIN_RC1);
+  SetupLTC265X(&U23_LTC2654, ETM_SPI_PORT_1, FCY_CLK, LTC265X_SPI_2_5_M_BIT, _PIN_RC1, _PIN_RC3);
 
 #define AFT_CONTROL_VOLTAGE_MAX_PROGRAM  12000
 #define AFT_CONTROL_VOLTAGE_MIN_PROGRAM  1000
@@ -270,7 +295,30 @@ void InitializeA36465(void) {
 			    AFT_CONTROL_VOLTAGE_MAX_PROGRAM,
 			    AFT_CONTROL_VOLTAGE_MIN_PROGRAM,
 			    0);
+
+#define AFT_ANALOG_INPUT_UNDER_VOLTAGE 0
+#define AFT_ANALOG_INPUT_OVER_VOLTAGE  10000
   
+  ETMAnalogInitializeInput(&global_data_A36465.aft_A_sample,
+			   MACRO_DEC_TO_SCALE_FACTOR_16(.16583),
+			   OFFSET_ZERO,
+			   ANALOG_INPUT_3,
+			   AFT_ANALOG_INPUT_OVER_VOLTAGE,
+			   AFT_ANALOG_INPUT_UNDER_VOLTAGE,
+			   0,
+			   0,
+			   0xFF00);
+
+  ETMAnalogInitializeInput(&global_data_A36465.aft_B_sample,
+			   MACRO_DEC_TO_SCALE_FACTOR_16(.16583),
+			   OFFSET_ZERO,
+			   ANALOG_INPUT_4,
+			   AFT_ANALOG_INPUT_OVER_VOLTAGE,
+			   AFT_ANALOG_INPUT_UNDER_VOLTAGE,
+			   0,
+			   0,
+			   0xFF00);
+
   // Initialize the Can module
   ETMCanSlaveInitialize();
 }
@@ -353,6 +401,19 @@ void DoAFC(void) {
   afc_motor.target_position = new_target_position;
 }
 
+
+void DoADCFilter(void) {
+  if (_BUFS) {
+    global_data_A36465.aft_A_sample.filtered_adc_reading = (ADCBUF1 << 6);
+    global_data_A36465.aft_B_sample.filtered_adc_reading = (ADCBUF2 << 6);
+  } else {
+    global_data_A36465.aft_A_sample.filtered_adc_reading = (ADCBUF9 << 6);
+    global_data_A36465.aft_B_sample.filtered_adc_reading = (ADCBUFA << 6);
+  }
+  ETMAnalogScaleCalibrateADCReading(&global_data_A36465.aft_A_sample);
+  ETMAnalogScaleCalibrateADCReading(&global_data_A36465.aft_B_sample);
+  global_data_A36465.sample_index++;
+}
 
 unsigned int ShiftIndex(unsigned int index, unsigned int shift) {
   unsigned int value;

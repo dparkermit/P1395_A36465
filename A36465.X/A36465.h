@@ -198,16 +198,21 @@ typedef struct {
   unsigned int control_state;
   unsigned int manual_target_position;
   unsigned int sample_complete;
-  int          frequency_error_filtered;
+  //int          frequency_error_filtered;
   unsigned int fast_afc_done;
   unsigned int pulses_on_this_run;
-  unsigned int pulse_off_counter;
+  unsigned long pulse_off_counter;
   unsigned int afc_hot_position;
   AnalogOutput aft_control_voltage;
   AnalogInput  aft_A_sample;
   AnalogInput  aft_B_sample;
-  unsigned int sample_index;
-  
+  unsigned int aft_A_sample_filtered;
+  unsigned int aft_B_sample_filtered;
+  //unsigned int sample_index;
+  unsigned int aft_A_sample_history[16];
+  unsigned int aft_B_sample_history[16];
+  unsigned int aft_filtered_error_for_client;
+
 } AFCControlData;
 
 extern AFCControlData global_data_A36465;

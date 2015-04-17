@@ -603,6 +603,7 @@ void __attribute__((interrupt, no_auto_psv, shadow)) _INT1Interrupt(void) {
     Need to add delay of 2.3us
   */
 
+  /*
   Nop();
   Nop();
   Nop();
@@ -628,7 +629,7 @@ void __attribute__((interrupt, no_auto_psv, shadow)) _INT1Interrupt(void) {
   Nop();
   Nop();
   Nop();  // 2.3uS
-
+  */
 
   _SAMP = 0;
   PIN_TEST_POINT_A = 1;
